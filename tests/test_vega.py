@@ -2,8 +2,10 @@
 from datetime import datetime, timedelta
 from itertools import product
 import json
+import operator
 
-from vincent.vega import field_property, Data, ValueRef, Mark, PropertySet
+from vincent.vega import (
+    field_property, Data, ValueRef, KeyedList, PropertySet, ValidationError)
 import nose.tools as nt
 
 import pandas as pd
@@ -23,7 +25,7 @@ sequences = {
 
 def test_field_property():
     """Field property decorator behaves correctly."""
-    validator_fail = False
+    validator_fail = [False]
 
     class DummyType(object):
         pass
@@ -34,18 +36,24 @@ def test_field_property():
 
         @field_property
         def test_field(value):
-            if validator_fail:
+            if validator_fail[0]:
                 raise ValueError('validator failed')
 
         @field_property(field_type=DummyType)
         def test_field_with_type(value):
-            if validator_fail:
+            if validator_fail[0]:
                 raise ValueError('validator failed')
 
         @field_property(field_name='a name')
         def test_field_with_name(value):
-            if validator_fail:
+            if validator_fail[0]:
                 raise ValueError('validator failed')
+
+    def assert_validator_fail():
+        validator_fail[0] = True
+        nt.assert_raises_regexp(ValueError, 'validator failed', setattr,
+                                test, 'test_field', 'testing')
+        validator_fail[0] = False
 
     test = TestFieldClass()
     nt.assert_is_none(test.test_field)
@@ -58,33 +66,24 @@ def test_field_property():
     del test.test_field
     nt.assert_is_none(test.test_field)
     nt.assert_dict_equal(test._field, {})
-
-    validator_fail = True
-    nt.assert_raises_regexp(ValueError, 'validator failed', setattr, test,
-                            'test_field', 'testing')
+    assert_validator_fail()
 
     # field_property with type checking
     test = TestFieldClass()
-    validator_fail = False
     dummy = DummyType()
     test.test_field_with_type = dummy
     nt.assert_equal(test.test_field_with_type, dummy)
     nt.assert_dict_equal(test._field, {'test_field_with_type': dummy})
     nt.assert_raises_regexp(ValueError, 'must be DummyType', setattr, test,
                             'test_field_with_type', 'testing')
-    validator_fail = True
-    nt.assert_raises_regexp(ValueError, 'validator failed', setattr, test,
-                            'test_field_with_type', dummy)
+    assert_validator_fail()
 
     # field_property with field name
     test = TestFieldClass()
-    validator_fail = False
     test.test_field_with_name = 'testing'
     nt.assert_equal(test.test_field_with_name, 'testing')
     nt.assert_dict_equal(test._field, {'a name': 'testing'})
-    validator_fail = True
-    nt.assert_raises_regexp(ValueError, 'validator failed', setattr, test,
-                            'test_field_with_name', 'testing')
+    assert_validator_fail()
 
 
 def assert_field_typechecking(field_types, test_obj):
@@ -286,3 +285,69 @@ class TestPropertySet(object):
             'font_size', 'font_weight', 'font_style']
         field_types = [(f, ValueRef) for f in fields]
         assert_field_typechecking(field_types, PropertySet())
+
+
+class TestKeyedList(object):
+    class SomeElement(object):
+        """Test object with some arbitrary attribute"""
+        def __init__(self, value, attr_name='name'):
+            setattr(self, attr_name, value)
+
+    def test_getitem(self):
+        """KeyedList getitem behaves correctly"""
+        k = KeyedList(attr_name='a_name')
+        nt.assert_raises_regexp(
+            KeyError, 'invalid key.*bad', operator.getitem, k, 'bad')
+        s = self.SomeElement('key', attr_name='a_name')
+        k.append(s)
+        nt.assert_equal(s, k['key'])
+        nt.assert_equal(s, k[0])
+        del k['key']
+        nt.assert_raises_regexp(
+            KeyError, 'invalid key.*key', operator.getitem, k, 'key')
+        s0 = self.SomeElement('key', attr_name='a_name')
+        k.extend([s, s0])
+        nt.assert_raises_regexp(
+            ValidationError, 'duplicate keys', operator.getitem, k, 'key')
+
+    def test_setitem(self):
+        """KeyedList setitem behaves correctly"""
+        k = KeyedList(attr_name='a_name')
+        s = self.SomeElement('key', attr_name='b_name')
+        nt.assert_raises_regexp(
+            ValidationError, 'object must have.*a_name', operator.setitem,
+            k, 'key', s)
+        s = self.SomeElement('bad', attr_name='a_name')
+        nt.assert_raises_regexp(
+            ValidationError, 'key must be equal.*a_name', operator.setitem,
+            k, 'key', s)
+        # Key doesn't exist yet
+        s = self.SomeElement('key', attr_name='a_name')
+        k['key'] = s
+        nt.assert_equal(s, k['key'])
+        nt.assert_equal(s, k[0])
+        # Key already exists
+        s = self.SomeElement('key', attr_name='a_name')
+        k['key'] = s
+        nt.assert_equal(s, k['key'])
+        nt.assert_equal(s, k[0])
+        # Set by index
+        s = self.SomeElement('key', attr_name='a_name')
+        k[0] = s
+        nt.assert_equal(s, k['key'])
+        nt.assert_equal(s, k[0])
+
+    def test_delitem(self):
+        """KeyedList delitem behaves correctly"""
+        k = KeyedList(attr_name='a_name')
+        s = self.SomeElement('key', attr_name='a_name')
+        k['key'] = s
+        nt.assert_equal(s, k['key'])
+        del k['key']
+        nt.assert_not_in('key', k)
+        k['key'] = s
+        nt.assert_equal(s, k['key'])
+        del k[0]
+        nt.assert_not_in('key', k)
+        nt.assert_raises_regexp(
+            KeyError, 'invalid key.*key', operator.delitem, k, 'key')

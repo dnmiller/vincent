@@ -223,7 +223,7 @@ class KeyedList(list):
             if key not in keys:
                 raise KeyError('invalid key %s' % key)
             else:
-                return self[keys.index(key)]
+                return list.__getitem__(self, keys.index(key))
         else:
             return list.__getitem__(self, key)
 
@@ -235,7 +235,7 @@ class KeyedList(list):
             elif getattr(value, self.attr_name) != key:
                 raise ValidationError(
                     "key must be equal to '" + self.attr_name +
-                    "'attribute")
+                    "' attribute")
 
             keys = self.__get_keys()
             if key not in keys:
@@ -244,6 +244,16 @@ class KeyedList(list):
                 list.__setitem__(self, keys.index(key), value)
         else:
             list.__setitem__(self, key, value)
+
+    def __delitem__(self, key):
+        if isinstance(key, str):
+            keys = self.__get_keys()
+            if key not in keys:
+                raise KeyError('invalid key %s' % key)
+            else:
+                list.__delitem__(self, keys.index(key))
+        else:
+            list.__delitem__(self, key)
 
 
 class Visualization(FieldClass):
